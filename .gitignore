@@ -1,0 +1,25 @@
+# 安全：API Key 配置文件（含密钥，绝不能提交）
+config.json
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 运行日志
+debug.log
+
+# 打包产物（exe 体积大，不入库）
+build/
+dist/
+*.spec
+*.exe
+
+# Word 临时文件
+~$*
+
+# 旧版备份（版本历史里已有原版，无需入库）
+function_plotter_v1_backup.py
+
+# 论文文档与素材（不纳入代码仓库）
+大语言模型驱动的交互式数学教育数据可视化_参考论文.docx
+论文素材/
