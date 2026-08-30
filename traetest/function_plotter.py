@@ -70,6 +70,12 @@ _TRANSFORM_KEYWORDS = (
     "平移", "拉伸", "压缩", "对称", "翻折", "旋转", "放大", "缩小", "伸缩",
 )
 
+# 二次函数“开口”相关指令：本地规则优先，避免大模型理解方向反了
+# （y=a*x**2 中 |a| 越大开口越窄，越小开口越宽）
+_OPEN_NARROW_KEYS = ("收窄", "变窄", "开口缩小")
+_OPEN_WIDE_KEYS = ("变宽", "开口放大", "开口扩大")
+
+
 
 # ---------------------------------------------------------------
 # 安全表达式求值：AST 白名单
@@ -1001,6 +1007,15 @@ class FunctionPlotter:
         self.chat_var.set("")
         self._chat_append("我", request)
 
+        # 二次函数“开口”类指令：本地规则直接生成，保证方向正确
+        if "开口" in request:
+            new_expr = self._gen_opening_expr(target["expr"], request)
+            if new_expr is not None and self._validate_expr(new_expr):
+                self._finish_modify(new_expr)
+                return
+            self._chat_append("系统", "正在调用大模型处理，请稍候……")
+            self.root.update_idletasks()
+
         # 变换类指令：平移/拉伸/对称/旋转等，走“解析参数 → 几何变换”
         if any(k in request for k in _TRANSFORM_KEYWORDS):
             self._chat_append("系统", f"正在变换 y = {target['expr']}……")
@@ -1014,16 +1029,25 @@ class FunctionPlotter:
                 )
                 return
             kind, params = parsed
+            new_expr = self._transform_expr(target["expr"], kind, params)
+            if new_expr:
+                label = f"y = {new_expr}"
+            else:
+                label = f"{target['label']} → {request}"
             self.curves.append({
                 "kind": "transformed",
                 "source_expr": target["expr"],
                 "tkind": kind,
                 "tparams": params,
-                "label": f"{target['label']} → {request}",
+                "label": label,
                 "linestyle": "--",
             })
             self._redraw(recompute=True, auto_zoom=True)
             self._chat_append("AI", f"已完成变换（虚线为新曲线）：{request}")
+            if new_expr:
+                self._chat_append("AI", f"新表达式：y = {new_expr}")
+            else:
+                self._chat_append("系统", "旋转后的曲线一般不是函数，无法写出新表达式")
             return
 
         # 修改类指令：让大模型生成新的函数表达式
@@ -1033,10 +1057,96 @@ class FunctionPlotter:
         if new_expr is None:
             self._chat_append("系统", "生成失败：请检查网络或 API Key 后重试")
             return
+        self._finish_modify(new_expr)
+
+    def _validate_expr(self, expr):
+        """本地试算表达式是否有效"""
+        normalized = _normalize_expr(expr)
+        probe = np.linspace(*self.ax.get_xlim(), 200)
+        try:
+            y = self._to_y_array(_safe_eval(normalized, {**SAFE_FUNCS, "x": probe}), probe)
+        except Exception:
+            return False
+        return y is not None
+
+    def _finish_modify(self, new_expr):
+        """把生成的新表达式放入待应用状态并提示用户"""
         self._pending_expr = new_expr
         self.apply_btn.configure(state="normal")
         self._chat_append("AI", f"新函数：y = {new_expr}")
         self._chat_append("系统", "点击右侧“应用到曲线”即可绘制（虚线为修改后的函数）")
+
+    def _gen_opening_expr(self, current_expr, request):
+        """针对二次函数“开口”指令：收窄→系数乘以大于 1 的数，变宽→乘以小于 1 的数"""
+        narrow = any(k in request for k in _OPEN_NARROW_KEYS)
+        wide = any(k in request for k in _OPEN_WIDE_KEYS)
+        if narrow == wide:
+            return None
+        factor = 2.0 if narrow else 0.5
+        m = re.search(r"\d+(?:\.\d+)?", request)
+        if m:
+            try:
+                num = float(m.group())
+            except ValueError:
+                num = None
+            if num and num > 0:
+                factor = num if narrow else 1.0 / num
+        return FunctionPlotter._scale_quad_coef(current_expr, factor)
+
+    @staticmethod
+    def _scale_quad_coef(expr, factor):
+        """把表达式中 x**2 项的系数乘以 factor（找不到二次项返回 None）"""
+        m = re.search(r"([+-]?\d*\.?\d*)\s*\*\s*x\*\*2", expr)
+        if m:
+            coef_str = m.group(1)
+            if coef_str in ("", "+"):
+                coef = 1.0
+            elif coef_str == "-":
+                coef = -1.0
+            else:
+                try:
+                    coef = float(coef_str)
+                except ValueError:
+                    return None
+            new_coef = coef * factor
+            head = expr[: m.start()]
+            tail = expr[m.end():]
+            return f"{head}{FunctionPlotter._fmt_coef(new_coef)}*x**2{tail}"
+        m = re.search(r"(?<![0-9a-zA-Z_)])x\*\*2", expr)
+        if m:
+            head = expr[: m.start()]
+            tail = expr[m.end():]
+            return f"{head}{FunctionPlotter._fmt_coef(factor)}*x**2{tail}"
+        return None
+
+    @staticmethod
+    def _fmt_coef(c):
+        return f"{c:.6g}"
+
+    @staticmethod
+    def _transform_expr(expr, kind, params):
+        """根据几何变换参数生成变换后的函数表达式；旋转返回 None"""
+        def sub_x(e, repl):
+            return re.sub(r"(?<![A-Za-z0-9_])x(?![A-Za-z0-9_])", repl, e)
+        d = params.get("d")
+        k = params.get("k")
+        if kind == "right" and d is not None:
+            return sub_x(expr, f"(x-{d:g})")
+        if kind == "left" and d is not None:
+            return sub_x(expr, f"(x+{d:g})")
+        if kind == "up" and d is not None:
+            return f"({expr})+{d:g}"
+        if kind == "down" and d is not None:
+            return f"({expr})-{d:g}"
+        if kind == "scale_x" and k is not None:
+            return sub_x(expr, f"(x/{k:g})")
+        if kind == "scale_y" and k is not None:
+            return f"{k:g}*({expr})"
+        if kind == "flip_x":
+            return f"-({expr})"
+        if kind == "flip_y":
+            return sub_x(expr, "(-x)")
+        return None
 
     def _ask_transform(self, kind, example):
         """点击“平移/旋转/对称/拉伸”链接：先确认方向、单位等细节再执行"""
@@ -1121,7 +1231,9 @@ class FunctionPlotter:
             "1. 使用 Python 能直接计算的写法（sin、cos、tan、sqrt、exp、log、"
             "abs 等；幂用 **，乘号用 *）。\n"
             "2. 以 x 为唯一的自变量，形如 sin(x)、x**2 + 2*x + 1。\n"
-            "3. 只输出表达式本身，不要 y=、不要引号、不要任何解释文字。\n\n"
+            "3. 只输出表达式本身，不要 y=、不要引号、不要任何解释文字。\n"
+            "4. 二次函数 y=a*x**2 中，|a| 越大开口越窄、|a| 越小开口越宽；"
+            "“开口收窄/变窄”应让 |a| 增大（如乘 2），“开口变宽/放大”应让 |a| 减小（如乘 0.5）。\n\n"
             f"当前函数表达式：{current_expr}\n"
             f"修改要求：{instruction}\n"
         )
