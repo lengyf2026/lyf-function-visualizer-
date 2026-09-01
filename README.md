@@ -14,9 +14,9 @@
 
 ## 📸 界面效果
 
-![函数变换示例](docs/demo-transform.png)
+![软件界面：向右平移2个单位](docs/demo-transform.png)
 
-![导数与切线示例](docs/demo-derivative.png)
+![软件界面：关于x轴对称](docs/demo-derivative.png)
 
 ## 🚀 运行方式
 
@@ -76,3 +76,4 @@ traetest/
 ## 📄 说明
 
 本项目为个人学习项目（作者：LYF），欢迎 fork 学习交流。
+

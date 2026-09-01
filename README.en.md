@@ -15,9 +15,9 @@ An **LLM-driven (DeepSeek)** interactive function plotting tool for math learnin
 
 ## 📸 Screenshots
 
-![Function transform demo](docs/demo-transform.png)
+![Software UI: shift right by 2 units](docs/demo-transform.png)
 
-![Derivative and tangent demo](docs/demo-derivative.png)
+![Software UI: reflect about the x-axis](docs/demo-derivative.png)
 
 ## 🚀 Getting Started
 
@@ -77,3 +77,4 @@ traetest/
 ## 📄 About
 
 A personal learning project by LYF. Feel free to fork it for study and communication.
+
